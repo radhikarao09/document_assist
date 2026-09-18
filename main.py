@@ -1,44 +1,16 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
 
-import os
-import shutil
-
-from dotenv import load_dotenv
-from openai import OpenAI
+from app.api.routes import router
+from app.core.logging import configure_logging
 
 
 # =========================================================
 # SETUP
 # =========================================================
 
-load_dotenv()
-
 app = FastAPI()
-
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
-)
-
-UPLOAD_FOLDER = "documents/uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-
-# =========================================================
-# CURRENT DOCUMENT
-# =========================================================
-
-current_vector_store_id = None
-current_filename = None
-
-
-# =========================================================
-# REQUEST MODEL
-# =========================================================
-
-class QuestionRequest(BaseModel):
-    question: str
+configure_logging()
 
 
 # =========================================================
@@ -394,154 +366,4 @@ async function askQuestion() {
 """
 
 
-# =========================================================
-# UPLOAD PDF
-# =========================================================
-
-@app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
-
-    global current_vector_store_id
-    global current_filename
-
-
-    if not file.filename.lower().endswith(".pdf"):
-
-        raise HTTPException(
-            status_code=400,
-            detail="Please select a PDF file."
-        )
-
-
-    file_path = os.path.join(
-        UPLOAD_FOLDER,
-        file.filename
-    )
-
-
-    with open(file_path, "wb") as buffer:
-
-        shutil.copyfileobj(
-            file.file,
-            buffer
-        )
-
-
-    try:
-
-        # Create a new vector store
-        vector_store = client.vector_stores.create(
-            name="Document Assistant"
-        )
-
-
-        # Upload and index the PDF
-        with open(file_path, "rb") as pdf_file:
-
-            client.vector_stores.files.upload_and_poll(
-                vector_store_id=vector_store.id,
-                file=pdf_file
-            )
-
-
-        current_vector_store_id = vector_store.id
-        current_filename = file.filename
-
-
-        return {
-            "success": True,
-            "filename": file.filename
-        }
-
-
-    except Exception as e:
-
-        current_vector_store_id = None
-        current_filename = None
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not process PDF: {str(e)}"
-        )
-
-
-# =========================================================
-# ASK QUESTION
-# =========================================================
-
-@app.post("/ask")
-async def ask_question(request: QuestionRequest):
-
-    if not current_vector_store_id:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Please choose a PDF first."
-        )
-
-
-    try:
-
-        response = client.responses.create(
-
-            model="gpt-5.6-luna",
-
-            instructions="""
-You are a document question-answering assistant.
-
-The uploaded PDF is the ONLY source of information.
-
-Answer questions about the document naturally.
-
-The user may ask broad questions such as:
-
-- What are the important topics?
-- What should I study for the exam?
-- Explain this document.
-- Give me a summary.
-- What are the main concepts?
-- Explain a topic in simple words.
-- What is the difference between two concepts?
-- What are the key points?
-
-For broad questions, use all relevant information
-retrieved from the document and provide a useful,
-well-organized answer.
-
-Do not require the user's wording to exactly match
-the wording in the PDF.
-
-Do not use outside knowledge.
-
-If the requested information genuinely cannot be
-found in the document, say:
-
-"I could not find relevant information in the uploaded document."
-
-Do not invent information.
-""",
-
-            input=request.question,
-
-            tools=[
-                {
-                    "type": "file_search",
-                    "vector_store_ids": [
-                        current_vector_store_id
-                    ]
-                }
-            ]
-        )
-
-
-        return {
-            "answer": response.output_text
-        }
-
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not answer the question: {str(e)}"
-        )
+app.include_router(router)

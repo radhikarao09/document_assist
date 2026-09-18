@@ -3,6 +3,8 @@ uvicorn
 python-multipart
 python-dotenv
 openai
-pymupdf
+pypdf
 sentence-transformers
 numpy
+langgraph
+pytest
